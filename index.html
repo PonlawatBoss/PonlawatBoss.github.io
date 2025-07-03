@@ -361,6 +361,24 @@
         </div>
     </div>
 
+    <!-- LLM Output Modal -->
+    <div id="llmOutputModal" class="fixed inset-0 flex items-center justify-center z-50 hidden modal-overlay">
+        <div class="bg-white p-8 rounded-lg shadow-xl w-11/12 md:w-2/3 lg:w-1/2 max-h-[90vh] overflow-y-auto modal-content">
+            <h3 id="llmModalTitle" class="text-2xl font-bold text-gray-800 mb-6"></h3>
+            <div id="llmOutputContent" class="prose max-w-none text-gray-700">
+                <!-- LLM generated content will be loaded here -->
+                <div class="flex justify-center items-center h-48">
+                    <div class="animate-spin rounded-full h-16 w-16 border-t-4 border-b-4 border-blue-500"></div>
+                </div>
+                <p class="text-center text-gray-500 mt-4">กำลังสร้างข้อมูล...</p>
+            </div>
+            <div class="flex justify-end mt-6">
+                <button type="button" id="closeLlmOutputModalBtn" class="bg-gray-300 hover:bg-gray-400 text-gray-800 px-6 py-3 rounded-md shadow-sm transition-colors">ปิด</button>
+            </div>
+        </div>
+    </div>
+    <!-- End LLM Output Modal -->
+
     <!-- Confirmation Modal -->
     <div id="confirmationModal" class="fixed inset-0 flex items-center justify-center z-50 hidden modal-overlay">
         <div class="bg-white p-8 rounded-lg shadow-xl w-11/12 md:w-1/3 modal-content">
@@ -446,6 +464,11 @@
         const addPaymentBtn = document.getElementById('addPaymentBtn');
         const paymentHistoryTableBody = document.getElementById('paymentHistoryTableBody');
         const closePaymentHistoryModalBtn = document.getElementById('closePaymentHistoryModalBtn');
+
+        const llmOutputModal = document.getElementById('llmOutputModal'); // New DOM element
+        const llmModalTitle = document.getElementById('llmModalTitle'); // New DOM element
+        const llmOutputContent = document.getElementById('llmOutputContent'); // New DOM element
+        const closeLlmOutputModalBtn = document.getElementById('closeLlmOutputModalBtn'); // New DOM element
 
         const confirmationModal = document.getElementById('confirmationModal');
         const confirmModalTitle = document.getElementById('confirmModalTitle');
@@ -694,15 +717,21 @@
                               status === 'Redeemed' ? 'ไถ่ถอนแล้ว/ชำระคืนแล้ว' : status}
                         </span>
                     </td>
-                    <td class="py-3 px-4 text-sm">
-                        <button class="text-blue-600 hover:text-blue-800 mr-3 edit-btn" data-id="${contract.id}" title="แก้ไขสัญญา">
-                            <i class="fas fa-edit"></i>
+                    <td class="py-3 px-4 text-sm flex flex-wrap gap-2">
+                        <button class="text-blue-600 hover:text-blue-800 edit-btn p-1 rounded-md" data-id="${contract.id}" title="แก้ไขสัญญา">
+                            <i class="fas fa-edit"></i> แก้ไข
                         </button>
-                        <button class="text-green-600 hover:text-green-800 mr-3 view-payments-btn" data-id="${contract.id}" title="ดูประวัติการชำระ">
-                            <i class="fas fa-receipt"></i>
+                        <button class="text-green-600 hover:text-green-800 view-payments-btn p-1 rounded-md" data-id="${contract.id}" title="ดูประวัติการชำระ">
+                            <i class="fas fa-receipt"></i> ประวัติชำระ
                         </button>
-                        <button class="text-red-600 hover:text-red-800 delete-btn" data-id="${contract.id}" title="ลบสัญญา">
-                            <i class="fas fa-trash-alt"></i>
+                        <button class="text-red-600 hover:text-red-800 delete-btn p-1 rounded-md" data-id="${contract.id}" title="ลบสัญญา">
+                            <i class="fas fa-trash-alt"></i> ลบ
+                        </button>
+                        <button class="text-purple-600 hover:text-purple-800 summarize-contract-btn p-1 rounded-md" data-id="${contract.id}" title="สรุปสัญญา">
+                            <i class="fas fa-lightbulb"></i> สรุปสัญญา ✨
+                        </button>
+                        <button class="text-orange-600 hover:text-orange-800 draft-reminder-btn p-1 rounded-md" data-id="${contract.id}" title="ร่างแจ้งเตือน">
+                            <i class="fas fa-bell"></i> ร่างแจ้งเตือน ✨
                         </button>
                     </td>
                 `;
@@ -716,13 +745,21 @@
          */
         function addContractTableEventListeners() {
             document.querySelectorAll('.edit-btn').forEach(button => {
-                button.onclick = (event) => openEditContractModal(event.currentTarget.dataset.id);
+                // FIX: Changed openEditContractModal to openAddEditContractModal
+                button.onclick = (event) => openAddEditContractModal(event.currentTarget.dataset.id);
             });
             document.querySelectorAll('.view-payments-btn').forEach(button => {
                 button.onclick = (event) => openPaymentHistoryModal(event.currentTarget.dataset.id);
             });
             document.querySelectorAll('.delete-btn').forEach(button => {
                 button.onclick = (event) => confirmDeleteContract(event.currentTarget.dataset.id);
+            });
+            // New: Event listeners for LLM buttons
+            document.querySelectorAll('.summarize-contract-btn').forEach(button => {
+                button.onclick = (event) => openLlmOutputModal('summary', event.currentTarget.dataset.id);
+            });
+            document.querySelectorAll('.draft-reminder-btn').forEach(button => {
+                button.onclick = (event) => openLlmOutputModal('reminder', event.currentTarget.dataset.id);
             });
         }
 
@@ -1145,6 +1182,138 @@
             actualPrincipalDisplay.textContent = formatCurrency(actualPrincipal);
         }
 
+        // --- LLM Integration Functions ---
+
+        /**
+         * Calls the Gemini API to generate content.
+         * @param {string} prompt - The prompt for the LLM.
+         * @returns {Promise<string>} The generated text.
+         */
+        async function callGeminiAPI(prompt) {
+            llmOutputContent.innerHTML = `
+                <div class="flex justify-center items-center h-48">
+                    <div class="animate-spin rounded-full h-16 w-16 border-t-4 border-b-4 border-blue-500"></div>
+                </div>
+                <p class="text-center text-gray-500 mt-4">กำลังสร้างข้อมูล...</p>
+            `;
+            const apiKey = ""; // If you want to use models other than gemini-2.0-flash or imagen-3.0-generate-002, provide an API key here. Otherwise, leave this as-is.
+            const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`;
+
+            let chatHistory = [];
+            chatHistory.push({ role: "user", parts: [{ text: prompt }] });
+            const payload = { contents: chatHistory };
+
+            try {
+                const response = await fetch(apiUrl, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload)
+                });
+                const result = await response.json();
+                if (result.candidates && result.candidates.length > 0 &&
+                    result.candidates[0].content && result.candidates[0].content.parts &&
+                    result.candidates[0].content.parts.length > 0) {
+                    return result.candidates[0].content.parts[0].text;
+                } else {
+                    console.error('Unexpected API response structure:', result);
+                    return 'ไม่สามารถสร้างข้อมูลได้: โครงสร้างการตอบกลับไม่ถูกต้อง';
+                }
+            } catch (error) {
+                console.error('Error calling Gemini API:', error);
+                return `เกิดข้อผิดพลาดในการเชื่อมต่อกับ AI: ${error.message}`;
+            }
+        }
+
+        /**
+         * Opens the LLM output modal and generates content based on type.
+         * @param {string} type - 'summary' or 'reminder'.
+         * @param {string} contractId - The ID of the contract.
+         */
+        async function openLlmOutputModal(type, contractId) {
+            const contract = contracts.find(c => c.id === contractId);
+            if (!contract) {
+                showMessageBox('ไม่พบสัญญาที่เลือก', 'error');
+                return;
+            }
+
+            llmOutputModal.classList.remove('hidden');
+            llmOutputContent.innerHTML = `
+                <div class="flex justify-center items-center h-48">
+                    <div class="animate-spin rounded-full h-16 w-16 border-t-4 border-b-4 border-blue-500"></div>
+                </div>
+                <p class="text-center text-gray-500 mt-4">กำลังสร้างข้อมูล...</p>
+            `;
+
+            let prompt = '';
+            let title = '';
+
+            if (type === 'summary') {
+                title = `สรุปสัญญา: ${contract.borrowerName}`;
+                prompt = `สรุปรายละเอียดสัญญาขายฝาก/กู้ยืมเงินต่อไปนี้เป็นภาษาไทย:
+                ชื่อลูกหนี้/ผู้ขายฝาก: ${contract.borrowerName}
+                เบอร์โทรศัพท์: ${contract.phoneNumber}
+                เลขบัตรประชาชน: ${contract.idCard}
+                ที่อยู่: ${contract.address}
+                ชื่อนายหน้า: ${contract.brokerName || 'ไม่มี'}
+                ประเภทสัญญา: ${contract.contractType}
+                เงินต้น: ${contract.principalAmount} บาท
+                อัตราดอกเบี้ย: ${contract.interestRate}% ต่อเดือน
+                วันที่ทำสัญญา: ${formatDate(contract.startDate)}
+                วันที่ครบกำหนด: ${formatDate(contract.endDate)}
+                ความถี่การชำระ: ${contract.paymentFrequency === 'monthly' ? 'รายเดือน' : contract.paymentFrequency === 'quarterly' ? 'ราย 3 เดือน' : 'รายปี'}
+                กำหนดชำระถัดไป (ระบุเอง): ${contract.nextPaymentDueDateManual ? formatDate(contract.nextPaymentDueDateManual) : 'ไม่มี'}
+                มีทรัพย์สินค้ำประกัน: ${contract.hasProperty ? 'มี' : 'ไม่มี'}
+                ${contract.hasProperty ? `
+                ประเภททรัพย์สิน: ${contract.propertyType || 'ไม่ระบุ'}
+                เลขโฉนด/เลขที่ดิน: ${contract.landDeedNo || 'ไม่ระบุ'}
+                ขนาด: ${contract.propertySize || 'ไม่ระบุ'}
+                ที่ตั้ง: ${contract.propertyLocation || 'ไม่ระบุ'}
+                ค่าหักโอน: ${contract.transferFee || 0} บาท
+                ค่าบริการพนักงานกรมที่ดิน: ${contract.landDeptServiceFee || 0} บาท
+                ค่านายหน้า: ${contract.brokerageFee || 0} บาท
+                เก็บอัตราดอกเบี้ยล่วงหน้า: ${contract.prepaidInterestMonths || 0} เดือน
+                ` : ''}
+                ประวัติการชำระ: ${contract.payments && contract.payments.length > 0 ? contract.payments.map(p => `${formatDate(p.date)}: ${formatCurrency(p.amount)}`).join(', ') : 'ยังไม่มีประวัติ'}
+                สถานะปัจจุบัน: ${getContractStatus(contract)}
+
+                โปรดสรุปเป็นข้อๆ ที่เข้าใจง่ายและเน้นข้อมูลสำคัญ เช่น เงินต้น, ดอกเบี้ย, วันครบกำหนด, และสถานะปัจจุบัน
+                `;
+            } else if (type === 'reminder') {
+                title = `ร่างแจ้งเตือนการชำระเงิน: ${contract.borrowerName}`;
+                const monthlyInterestAmount = (contract.principalAmount * (contract.interestRate / 100)).toFixed(2);
+                prompt = `ร่างข้อความแจ้งเตือนการชำระเงินสำหรับสัญญาต่อไปนี้เป็นภาษาไทย โดยเน้นความสุภาพและชัดเจน:
+                ชื่อลูกหนี้/ผู้ขายฝาก: ${contract.borrowerName}
+                เบอร์โทรศัพท์: ${contract.phoneNumber}
+                ประเภทสัญญา: ${contract.contractType}
+                เงินต้น: ${contract.principalAmount} บาท
+                อัตราดอกเบี้ย: ${contract.interestRate}% ต่อเดือน
+                วันที่ทำสัญญา: ${formatDate(contract.startDate)}
+                วันที่ครบกำหนด: ${formatDate(contract.endDate)}
+                กำหนดชำระถัดไป: ${contract.nextPaymentDueDateManual ? formatDate(contract.nextPaymentDueDateManual) : 'โปรดระบุ'}
+                ยอดดอกเบี้ยที่ต้องชำระ: ${monthlyInterestAmount} บาท
+
+                โปรดสร้างข้อความที่สามารถส่งผ่านช่องทางเช่น SMS หรือ Line ได้ โดยไม่ต้องมีคำทักทายหรือลงท้ายยาวๆ และสามารถคัดลอกไปใช้ได้ทันที
+                `;
+            }
+
+            llmModalTitle.textContent = title;
+            const generatedText = await callGeminiAPI(prompt);
+            llmOutputContent.innerHTML = `<pre class="whitespace-pre-wrap font-sans text-base">${generatedText}</pre>`;
+        }
+
+        /**
+         * Closes the LLM output modal.
+         */
+        function closeLlmOutputModal() {
+            llmOutputModal.classList.add('hidden');
+            llmOutputContent.innerHTML = `
+                <div class="flex justify-center items-center h-48">
+                    <div class="animate-spin rounded-full h-16 w-16 border-t-4 border-b-4 border-blue-500"></div>
+                </div>
+                <p class="text-center text-gray-500 mt-4">กำลังสร้างข้อมูล...</p>
+            `; // Reset content
+        }
+
         // --- Event Listeners ---
 
         // Navigation
@@ -1186,6 +1355,9 @@
         // Payment History Modal
         addPaymentBtn.addEventListener('click', addPayment);
         closePaymentHistoryModalBtn.addEventListener('click', closePaymentHistoryModal);
+
+        // LLM Output Modal
+        closeLlmOutputModalBtn.addEventListener('click', closeLlmOutputModal); // New event listener
 
         // Confirmation Modal
         cancelConfirmBtn.addEventListener('click', closeConfirmationModal);
