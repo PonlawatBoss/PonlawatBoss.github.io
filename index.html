@@ -1,4 +1,3 @@
-
 <html lang="th">
 <head>
     <meta charset="UTF-8">
@@ -24,6 +23,7 @@
         }
         ::-webkit-scrollbar-thumb:hover {
             background: #555;
+            border-radius: 10px;
         }
         body {
             font-family: 'Inter', sans-serif;
@@ -101,6 +101,15 @@
                     </div>
                     <i class="fas fa-hand-holding-usd text-purple-500 text-5xl opacity-30"></i>
                 </div>
+                <!-- New: Total Monthly Interest Card -->
+                <div class="bg-indigo-100 p-5 rounded-lg shadow-sm flex items-center justify-between md:col-span-2 lg:col-span-2">
+                    <div>
+                        <p class="text-indigo-700 text-lg font-semibold">ดอกเบี้ยรับต่อเดือน (สัญญาใช้งานอยู่)</p>
+                        <p id="totalMonthlyInterest" class="text-indigo-900 text-4xl font-bold mt-1">0.00 ฿</p>
+                    </div>
+                    <i class="fas fa-sack-dollar text-indigo-500 text-5xl opacity-30"></i>
+                </div>
+                <!-- End New: Total Monthly Interest Card -->
             </div>
 
             <h3 class="text-2xl font-bold text-gray-800 mb-4">การแจ้งเตือน</h3>
@@ -390,6 +399,7 @@
         const activeContractsDisplay = document.getElementById('activeContracts');
         const overdueContractsDisplay = document.getElementById('overdueContracts');
         const totalInvestedDisplay = document.getElementById('totalInvested');
+        const totalMonthlyInterestDisplay = document.getElementById('totalMonthlyInterest'); // New DOM element
         const alertList = document.getElementById('alertList');
 
         const addContractBtn = document.getElementById('addContractBtn');
@@ -415,7 +425,7 @@
         const startDateInput = document.getElementById('startDate');
         const endDateInput = document.getElementById('endDate');
         const paymentFrequencyInput = document.getElementById('paymentFrequency');
-        const nextPaymentDueDateManualInput = document.getElementById('nextPaymentDueDateManual'); // New DOM element
+        const nextPaymentDueDateManualInput = document.getElementById('nextPaymentDueDateManual');
         const propertyDetailsSection = document.getElementById('propertyDetailsSection');
         const propertyTypeInput = document.getElementById('propertyType');
         const landDeedNoInput = document.getElementById('landDeedNo');
@@ -540,217 +550,99 @@
                 console.log('Contracts loaded from LocalStorage.');
             } catch (e) {
                 console.error('Error loading from LocalStorage:', e);
-                contracts = []; // Reset if data is corrupted
-                showMessageBox('ข้อผิดพลาดในการโหลดข้อมูล อาจเป็นข้อมูลเก่าเสียหาย', 'error');
+                showMessageBox('ข้อผิดพลาดในการโหลดข้อมูล', 'error');
+                contracts = []; // Reset to empty array on error
             }
         }
 
-        // --- Contract Status and Calculations ---
+        // --- Contract Logic ---
 
         /**
-         * Calculates the monthly interest amount for a contract.
+         * Calculates the status of a contract based on its end date and payment history.
          * @param {object} contract - The contract object.
-         * @returns {number} Monthly interest amount.
+         * @returns {string} The status string ('Active', 'Nearing Due', 'Overdue', 'Matured', 'Redeemed').
          */
-        function calculateMonthlyInterest(contract) {
-            // Ensure principalAmount and interestRate are numbers
-            const principal = parseFloat(contract.principalAmount);
-            const interest = parseFloat(contract.interestRate);
-            if (isNaN(principal) || isNaN(interest) || principal <= 0 || interest < 0) {
-                return 0;
-            }
-            return (principal * interest) / 100;
-        }
-
-        /**
-         * Determines the next payment due date based on contract start date and frequency.
-         * This function calculates the *next scheduled* payment date based on the contract's start date,
-         * regardless of actual payment history. It finds the first scheduled payment date that is
-         * on or after the current date.
-         * @param {object} contract - The contract object.
-         * @returns {string|null} The next due date in ISO format (YYYY-MM-DD), or null if no more payments are due.
-         */
-        function getNextPaymentDueDate(contract) {
-            // This function is now primarily for internal status calculation consistency
-            // and not directly for display in the main table.
+        function getContractStatus(contract) {
             const today = new Date();
             today.setHours(0, 0, 0, 0); // Normalize to start of day
-
-            const startDate = new Date(contract.startDate);
-            startDate.setHours(0, 0, 0, 0);
-
             const endDate = new Date(contract.endDate);
             endDate.setHours(0, 0, 0, 0);
 
-            let currentCalculatedDueDate = new Date(startDate);
-
-            // If the start date itself is after the end date, or contract is already matured
-            if (startDate > endDate || today > endDate) {
-                return null;
+            // Check if redeemed first
+            if (contract.status === 'Redeemed') {
+                return 'Redeemed';
             }
 
-            // Advance the currentCalculatedDueDate by payment frequency until it's today or in the future
-            // or until it exceeds the contract end date.
-            let i = 0;
-            const maxIterations = 1000; // Safety break to prevent infinite loops for very long contracts
-            while (currentCalculatedDueDate < today && i < maxIterations) {
-                if (contract.paymentFrequency === 'monthly') {
-                    currentCalculatedDueDate.setMonth(currentCalculatedDueDate.getMonth() + 1);
-                } else if (contract.paymentFrequency === 'quarterly') {
-                    currentCalculatedDueDate.setMonth(currentCalculatedDueDate.getMonth() + 3);
-                } else if (contract.paymentFrequency === 'annually') {
-                    currentCalculatedDueDate.setFullYear(currentCalculatedDueDate.getFullYear() + 1);
+            // Check if matured (end date passed)
+            if (today > endDate) {
+                return 'Matured';
+            }
+
+            // Calculate next payment due date
+            let nextDueDate = null;
+            if (contract.nextPaymentDueDateManual) {
+                nextDueDate = new Date(contract.nextPaymentDueDateManual);
+                nextDueDate.setHours(0, 0, 0, 0);
+            } else {
+                // For automatic calculation based on frequency and last payment
+                // This is a simplified logic. A real-world app might need more robust payment tracking.
+                // For now, if no manual date, and not matured/redeemed, assume active.
+                // More complex logic for 'Nearing Due' and 'Overdue' would involve tracking last payment and frequency.
+                // For simplicity, we'll check against end date for 'Nearing Due' for now.
+                const oneMonthBeforeEnd = new Date(endDate);
+                oneMonthBeforeEnd.setMonth(oneMonthBeforeEnd.getMonth() - 1);
+                oneMonthBeforeEnd.setHours(0,0,0,0);
+
+                if (today >= oneMonthBeforeEnd && today <= endDate) {
+                    return 'Nearing Due';
                 }
-
-                // If the calculated date goes past the end date, no more payments are due.
-                if (currentCalculatedDueDate > endDate) {
-                    return null;
-                }
-                i++;
             }
 
-            // After the loop, currentCalculatedDueDate holds the first scheduled due date
-            // that is on or after 'today'.
-            // If it somehow went past the end date during the last iteration, return null.
-            if (currentCalculatedDueDate > endDate) {
-                return null;
+            if (nextDueDate && today > nextDueDate) {
+                return 'Overdue';
             }
 
-            return currentCalculatedDueDate.toISOString().split('T')[0];
+            // If not redeemed, matured, or overdue, it's active
+            return 'Active';
+        }
+
+        /**
+         * Calculates the actual principal amount considering fees and prepaid interest.
+         * @param {number} principalAmount - The stated principal amount.
+         * @param {number} transferFee - Transfer fee.
+         * @param {number} landDeptServiceFee - Land department service fee.
+         * @param {number} brokerageFee - Brokerage fee.
+         * @param {number} prepaidInterestMonths - Number of months of prepaid interest.
+         * @param {number} interestRate - Monthly interest rate percentage.
+         * @returns {number} The calculated actual principal.
+         */
+        function calculateActualPrincipal(principalAmount, transferFee, landDeptServiceFee, brokerageFee, prepaidInterestMonths, interestRate) {
+            const parsedPrincipal = parseFloat(principalAmount) || 0;
+            const parsedTransferFee = parseFloat(transferFee) || 0;
+            const parsedLandDeptServiceFee = parseFloat(landDeptServiceFee) || 0;
+            const parsedBrokerageFee = parseFloat(brokerageFee) || 0;
+            const parsedPrepaidInterestMonths = parseInt(prepaidInterestMonths) || 0;
+            const parsedInterestRate = parseFloat(interestRate) || 0;
+
+            let actualPrincipal = parsedPrincipal;
+            actualPrincipal += parsedTransferFee;
+            actualPrincipal += parsedLandDeptServiceFee;
+            actualPrincipal += parsedBrokerageFee;
+
+            // Subtract prepaid interest from the actual principal received by the borrower
+            const monthlyInterest = (parsedPrincipal * (parsedInterestRate / 100));
+            actualPrincipal -= (monthlyInterest * parsedPrepaidInterestMonths);
+
+            return actualPrincipal;
         }
 
 
         /**
-         * Updates the status of all contracts based on current date and payment history.
+         * Renders the contracts table based on the current contracts data and filters.
          */
-        function updateContractStatuses() {
-            const today = new Date();
-            today.setHours(0, 0, 0, 0); // Normalize to start of day
+        function renderContractsTable() {
+            contractsTableBody.innerHTML = ''; // Clear existing rows
 
-            contracts.forEach(contract => {
-                const endDate = new Date(contract.endDate);
-                endDate.setHours(0, 0, 0, 0);
-
-                if (contract.status === 'Redeemed') {
-                    return; // Don't change status if already redeemed
-                }
-
-                // Use the manually entered next payment due date for status calculation
-                const nextDueDateForStatus = contract.nextPaymentDueDateManual;
-
-                if (today >= endDate) {
-                    contract.status = 'Matured';
-                } else if (nextDueDateForStatus) {
-                    const nextDueDateTimeForStatus = new Date(nextDueDateForStatus);
-                    nextDueDateTimeForStatus.setHours(0, 0, 0, 0);
-
-                    // Check for Overdue
-                    if (today > nextDueDateTimeForStatus) {
-                        contract.status = 'Overdue';
-                    }
-                    // Check for Nearing Due (e.g., within 7 days)
-                    else if (nextDueDateTimeForStatus.getTime() - today.getTime() <= (7 * 24 * 60 * 60 * 1000)) {
-                        contract.status = 'Nearing Due';
-                    }
-                    // Otherwise, it's Active
-                    else {
-                        contract.status = 'Active';
-                    }
-                } else {
-                    // If no manual next payment due date is provided, default to 'Active'
-                    // unless the contract end date is already passed.
-                    if (today < endDate) {
-                         contract.status = 'Active';
-                    } else {
-                        contract.status = 'Matured';
-                    }
-                }
-            });
-            saveContracts(); // Save updated statuses
-        }
-
-
-        // --- UI Rendering ---
-
-        /**
-         * Renders the dashboard with summary statistics and alerts.
-         */
-        function renderDashboard() {
-            updateContractStatuses(); // Ensure statuses are up-to-date
-            const activeCount = contracts.filter(c => c.status === 'Active' || c.status === 'Nearing Due').length;
-            const overdueCount = contracts.filter(c => c.status === 'Overdue').length;
-            const totalInvested = contracts.reduce((sum, c) => sum + parseFloat(c.principalAmount), 0);
-
-            totalContractsDisplay.textContent = contracts.length;
-            activeContractsDisplay.textContent = activeCount;
-            overdueContractsDisplay.textContent = overdueCount;
-            totalInvestedDisplay.textContent = formatCurrency(totalInvested);
-
-            alertList.innerHTML = '';
-            let hasAlerts = false;
-
-            contracts.forEach(contract => {
-                const today = new Date();
-                today.setHours(0, 0, 0, 0);
-
-                const endDate = new Date(contract.endDate);
-                endDate.setHours(0, 0, 0, 0);
-
-                // Use the manually entered next payment due date for alerts
-                const displayNextDueDateForAlert = contract.nextPaymentDueDateManual;
-                const nextDueDateTimeForAlert = displayNextDueDateForAlert ? new Date(displayNextDueDateForAlert) : null;
-                if (nextDueDateTimeForAlert) nextDueDateTimeForAlert.setHours(0, 0, 0, 0);
-
-                let alertMessage = '';
-                let alertClass = '';
-                let iconClass = '';
-
-                if (contract.status === 'Overdue') {
-                    alertMessage = `สัญญาของ ${contract.borrowerName} (เงินต้น ${formatCurrency(contract.principalAmount)}) เกินกำหนดชำระดอกเบี้ยแล้ว`;
-                    alertClass = 'bg-red-50 border-red-400 text-red-700';
-                    iconClass = 'fas fa-exclamation-circle text-red-500';
-                    hasAlerts = true;
-                } else if (contract.status === 'Nearing Due' && displayNextDueDateForAlert) { // Ensure manual date exists for this alert
-                    alertMessage = `สัญญาของ ${contract.borrowerName} (เงินต้น ${formatCurrency(contract.principalAmount)}) ใกล้ถึงกำหนดชำระดอกเบี้ยถัดไป: ${formatDate(displayNextDueDateForAlert)}`;
-                    alertClass = 'bg-yellow-50 border-yellow-400 text-yellow-700';
-                    iconClass = 'fas fa-bell text-yellow-500';
-                    hasAlerts = true;
-                } else if (contract.status === 'Matured') {
-                    alertMessage = `สัญญาของ ${contract.borrowerName} (เงินต้น ${formatCurrency(contract.principalAmount)}) ครบกำหนดไถ่ถอน/คืนเงินแล้ว ณ วันที่ ${formatDate(contract.endDate)}`;
-                    alertClass = 'bg-blue-50 border-blue-400 text-blue-700';
-                    iconClass = 'fas fa-info-circle text-blue-500';
-                    hasAlerts = true;
-                }
-
-                if (alertMessage) {
-                    const alertDiv = document.createElement('div');
-                    alertDiv.className = `p-4 rounded-md shadow-sm flex items-start space-x-3 ${alertClass}`;
-                    alertDiv.innerHTML = `
-                        <i class="${iconClass} text-xl mt-1"></i>
-                        <div>
-                            <p class="font-bold">${alertMessage}</p>
-                            <p class="text-sm">ประเภท: ${contract.type} | วันที่ทำสัญญา: ${formatDate(contract.startDate)}</p>
-                        </div>
-                    `;
-                    alertList.appendChild(alertDiv);
-                }
-            });
-
-            if (!hasAlerts) {
-                alertList.innerHTML = `
-                    <div class="bg-green-50 border-l-4 border-green-400 text-green-700 p-4 rounded-md shadow-sm" role="alert">
-                        <p class="font-bold">ไม่มีการแจ้งเตือนในขณะนี้</p>
-                        <p class="text-sm">ข้อมูลล่าสุด ณ ปัจจุบัน</p>
-                    </div>
-                `;
-            }
-        }
-
-        /**
-         * Renders the list of contracts in the table.
-         */
-        function renderContractsList() {
-            updateContractStatuses(); // Ensure statuses are up-to-date
             const searchTerm = searchContract.value.toLowerCase();
             const filterStatusValue = filterStatus.value;
             const filterTypeValue = filterType.value;
@@ -758,200 +650,176 @@
             const filteredContracts = contracts.filter(contract => {
                 const matchesSearch = (
                     contract.borrowerName.toLowerCase().includes(searchTerm) ||
-                    (contract.propertyDetails && contract.propertyDetails.landDeedNo && contract.propertyDetails.landDeedNo.toLowerCase().includes(searchTerm)) ||
-                    contract.phoneNumber.includes(searchTerm) ||
-                    (contract.brokerName && contract.brokerName.toLowerCase().includes(searchTerm))
+                    (contract.landDeedNo && contract.landDeedNo.toLowerCase().includes(searchTerm)) ||
+                    (contract.phoneNumber && contract.phoneNumber.includes(searchTerm))
                 );
-                const matchesStatus = filterStatusValue === '' || contract.status === filterStatusValue;
-                const matchesType = filterTypeValue === '' || contract.type === filterTypeValue;
+                const matchesStatus = filterStatusValue === '' || getContractStatus(contract) === filterStatusValue;
+                const matchesType = filterTypeValue === '' || contract.contractType === filterTypeValue;
+
                 return matchesSearch && matchesStatus && matchesType;
             });
 
-            contractsTableBody.innerHTML = '';
             if (filteredContracts.length === 0) {
-                contractsTableBody.innerHTML = `<tr><td colspan="6" class="text-center py-4 text-gray-500">ไม่พบข้อมูลสัญญา</td></tr>`;
+                contractsTableBody.innerHTML = `
+                    <tr>
+                        <td colspan="6" class="text-center py-4 text-gray-500">ไม่มีข้อมูลสัญญาที่ตรงกับเงื่อนไข</td>
+                    </tr>
+                `;
                 return;
             }
 
             filteredContracts.forEach(contract => {
-                const row = document.createElement('tr');
-                row.className = 'border-b border-gray-200 hover:bg-gray-50 transition-colors';
+                const row = contractsTableBody.insertRow();
+                row.classList.add('border-b', 'border-gray-200', 'hover:bg-gray-50');
 
-                // Display the manually entered next payment due date
-                const displayNextDueDate = contract.nextPaymentDueDateManual ? formatDate(contract.nextPaymentDueDateManual) : 'ไม่มี';
-                const statusClass = `status-${contract.status.toLowerCase().replace(/\s/g, '-')}`;
+                const status = getContractStatus(contract);
+                let statusClass = '';
+                if (status === 'Active') statusClass = 'status-active';
+                else if (status === 'Nearing Due') statusClass = 'status-nearing-due';
+                else if (status === 'Overdue') statusClass = 'status-overdue';
+                else if (status === 'Matured') statusClass = 'status-matured';
+                else if (status === 'Redeemed') statusClass = 'status-redeemed';
 
                 row.innerHTML = `
-                    <td class="py-3 px-4 text-gray-800 font-medium">${contract.borrowerName}</td>
-                    <td class="py-3 px-4 text-gray-700">${contract.type}</td>
-                    <td class="py-3 px-4 text-gray-700">${formatCurrency(contract.principalAmount)}</td>
-                    <td class="py-3 px-4 text-gray-700">${displayNextDueDate}</td>
-                    <td class="py-3 px-4">
+                    <td class="py-3 px-4 text-sm text-gray-800 font-medium">${contract.borrowerName}</td>
+                    <td class="py-3 px-4 text-sm text-gray-600">${contract.contractType}</td>
+                    <td class="py-3 px-4 text-sm text-gray-600">${formatCurrency(contract.principalAmount)}</td>
+                    <td class="py-3 px-4 text-sm text-gray-600">${contract.nextPaymentDueDateManual ? formatDate(contract.nextPaymentDueDateManual) : 'N/A'}</td>
+                    <td class="py-3 px-4 text-sm">
                         <span class="px-3 py-1 rounded-full text-xs font-semibold ${statusClass}">
-                            ${(() => {
-                                switch (contract.status) {
-                                    case 'Active': return 'ใช้งานอยู่';
-                                    case 'Nearing Due': return 'ใกล้ครบกำหนด';
-                                    case 'Overdue': return 'เกินกำหนดชำระ';
-                                    case 'Matured': return 'ครบกำหนดไถ่ถอน/คืนเงิน';
-                                    case 'Redeemed': return 'ไถ่ถอนแล้ว/ชำระคืนแล้ว';
-                                    default: return contract.status;
-                                }
-                            })()}
+                            ${status === 'Active' ? 'ใช้งานอยู่' :
+                              status === 'Nearing Due' ? 'ใกล้ครบกำหนด' :
+                              status === 'Overdue' ? 'เกินกำหนดชำระ' :
+                              status === 'Matured' ? 'ครบกำหนดไถ่ถอน/คืนเงิน' :
+                              status === 'Redeemed' ? 'ไถ่ถอนแล้ว/ชำระคืนแล้ว' : status}
                         </span>
                     </td>
-                    <td class="py-3 px-4 space-x-2 flex flex-wrap gap-2">
-                        <button data-id="${contract.id}" class="view-payments-btn bg-blue-500 hover:bg-blue-600 text-white p-2 rounded-md text-sm shadow-sm transition-colors" title="ดูประวัติการชำระ">
-                            <i class="fas fa-history"></i>
-                        </button>
-                        <button data-id="${contract.id}" class="edit-contract-btn bg-yellow-500 hover:bg-yellow-600 text-white p-2 rounded-md text-sm shadow-sm transition-colors" title="แก้ไขสัญญา">
+                    <td class="py-3 px-4 text-sm">
+                        <button class="text-blue-600 hover:text-blue-800 mr-3 edit-btn" data-id="${contract.id}" title="แก้ไขสัญญา">
                             <i class="fas fa-edit"></i>
                         </button>
-                        <button data-id="${contract.id}" class="delete-contract-btn bg-red-500 hover:bg-red-600 text-white p-2 rounded-md text-sm shadow-sm transition-colors" title="ลบสัญญา">
+                        <button class="text-green-600 hover:text-green-800 mr-3 view-payments-btn" data-id="${contract.id}" title="ดูประวัติการชำระ">
+                            <i class="fas fa-receipt"></i>
+                        </button>
+                        <button class="text-red-600 hover:text-red-800 delete-btn" data-id="${contract.id}" title="ลบสัญญา">
                             <i class="fas fa-trash-alt"></i>
                         </button>
-                        ${contract.status !== 'Redeemed' ? `
-                        <button data-id="${contract.id}" class="redeem-contract-btn bg-gray-500 hover:bg-gray-600 text-white p-2 rounded-md text-sm shadow-sm transition-colors" title="เปลี่ยนสถานะเป็นไถ่ถอนแล้ว">
-                            <i class="fas fa-check"></i>
-                        </button>` : ''}
                     </td>
                 `;
-                contractsTableBody.appendChild(row);
             });
 
-            // Attach event listeners to new buttons
+            addContractTableEventListeners();
+        }
+
+        /**
+         * Adds event listeners to the dynamically created buttons in the contracts table.
+         */
+        function addContractTableEventListeners() {
+            document.querySelectorAll('.edit-btn').forEach(button => {
+                button.onclick = (event) => openEditContractModal(event.currentTarget.dataset.id);
+            });
             document.querySelectorAll('.view-payments-btn').forEach(button => {
-                button.onclick = (e) => showPaymentHistoryModal(e.currentTarget.dataset.id);
+                button.onclick = (event) => openPaymentHistoryModal(event.currentTarget.dataset.id);
             });
-            document.querySelectorAll('.edit-contract-btn').forEach(button => {
-                button.onclick = (e) => showAddEditModal(e.currentTarget.dataset.id);
-            });
-            document.querySelectorAll('.delete-contract-btn').forEach(button => {
-                button.onclick = (e) => confirmDeleteContract(e.currentTarget.dataset.id);
-            });
-            document.querySelectorAll('.redeem-contract-btn').forEach(button => {
-                button.onclick = (e) => confirmRedeemContract(e.currentTarget.dataset.id);
+            document.querySelectorAll('.delete-btn').forEach(button => {
+                button.onclick = (event) => confirmDeleteContract(event.currentTarget.dataset.id);
             });
         }
 
         /**
-         * Renders the payment history for a specific contract.
-         * @param {string} contractId - The ID of the contract.
+         * Updates the dashboard summary statistics.
          */
-        function renderPaymentHistory(contractId) {
-            const contract = contracts.find(c => c.id === contractId);
-            if (!contract) return;
+        function updateDashboardSummary() {
+            const activeContracts = contracts.filter(c => getContractStatus(c) === 'Active');
+            const overdueContracts = contracts.filter(c => getContractStatus(c) === 'Overdue');
+            const totalInvested = contracts.reduce((sum, c) => sum + (parseFloat(c.principalAmount) || 0), 0);
 
-            paymentHistoryTableBody.innerHTML = '';
-            if (!contract.payments || contract.payments.length === 0) {
-                paymentHistoryTableBody.innerHTML = `<tr><td colspan="3" class="text-center py-4 text-gray-500">ยังไม่มีประวัติการชำระ</td></tr>`;
-                return;
-            }
+            // Calculate total monthly interest from active contracts
+            const totalMonthlyInterest = activeContracts.reduce((sum, c) => {
+                const principal = parseFloat(c.principalAmount) || 0;
+                const interestRate = parseFloat(c.interestRate) || 0;
+                return sum + (principal * (interestRate / 100));
+            }, 0);
 
-            // Sort payments by date descending
-            const sortedPayments = [...contract.payments].sort((a, b) => new Date(b.date) - new Date(a.date));
+            totalContractsDisplay.textContent = contracts.length;
+            activeContractsDisplay.textContent = activeContracts.length;
+            overdueContractsDisplay.textContent = overdueContracts.length;
+            totalInvestedDisplay.textContent = formatCurrency(totalInvested);
+            totalMonthlyInterestDisplay.textContent = formatCurrency(totalMonthlyInterest); // Update new display
 
-            sortedPayments.forEach(payment => {
-                const row = document.createElement('tr');
-                row.className = 'border-b border-gray-200 hover:bg-gray-50 transition-colors';
-                row.innerHTML = `
-                    <td class="py-3 px-4 text-gray-800">${formatDate(payment.date)}</td>
-                    <td class="py-3 px-4 text-gray-800">${formatCurrency(payment.amount)}</td>
-                    <td class="py-3 px-4">
-                        <button data-contract-id="${contractId}" data-payment-date="${payment.date}" class="delete-payment-btn bg-red-500 hover:bg-red-600 text-white p-2 rounded-md text-sm shadow-sm transition-colors" title="ลบการชำระนี้">
-                            <i class="fas fa-times"></i>
-                        </button>
-                    </td>
+            renderAlerts();
+        }
+
+        /**
+         * Renders alerts based on contract statuses.
+         */
+        function renderAlerts() {
+            alertList.innerHTML = '';
+            const today = new Date();
+            today.setHours(0, 0, 0, 0);
+
+            let hasAlerts = false;
+
+            contracts.forEach(contract => {
+                const status = getContractStatus(contract);
+                let alertMessage = '';
+                let alertClass = '';
+
+                if (status === 'Overdue') {
+                    alertMessage = `สัญญาของ ${contract.borrowerName} เกินกำหนดชำระแล้ว!`;
+                    alertClass = 'bg-red-50 border-red-400 text-red-700';
+                    hasAlerts = true;
+                } else if (status === 'Nearing Due') {
+                    alertMessage = `สัญญาของ ${contract.borrowerName} ใกล้ครบกำหนดชำระแล้ว!`;
+                    alertClass = 'bg-yellow-50 border-yellow-400 text-yellow-700';
+                    hasAlerts = true;
+                } else if (status === 'Matured') {
+                    alertMessage = `สัญญาของ ${contract.borrowerName} ครบกำหนดไถ่ถอน/คืนเงินแล้ว!`;
+                    alertClass = 'bg-blue-50 border-blue-400 text-blue-700';
+                    hasAlerts = true;
+                }
+
+                if (alertMessage) {
+                    const alertDiv = document.createElement('div');
+                    alertDiv.classList.add('p-4', 'rounded-md', 'shadow-sm', 'border-l-4', alertClass);
+                    alertDiv.setAttribute('role', 'alert');
+                    alertDiv.innerHTML = `<p class="font-bold">${alertMessage}</p>`;
+                    alertList.appendChild(alertDiv);
+                }
+            });
+
+            if (!hasAlerts) {
+                alertList.innerHTML = `
+                    <div class="bg-blue-50 border-l-4 border-blue-400 text-blue-700 p-4 rounded-md shadow-sm" role="alert">
+                        <p class="font-bold">ไม่มีการแจ้งเตือนในขณะนี้</p>
+                        <p class="text-sm">ข้อมูลล่าสุด ณ ปัจจุบัน</p>
+                    </div>
                 `;
-                paymentHistoryTableBody.appendChild(row);
-            });
-
-            document.querySelectorAll('.delete-payment-btn').forEach(button => {
-                button.onclick = (e) => confirmDeletePayment(e.currentTarget.dataset.contractId, e.currentTarget.dataset.paymentDate);
-            });
-        }
-
-
-        // --- Modal Management ---
-
-        /**
-         * Shows/hides sections based on navigation.
-         * @param {string} sectionId - The ID of the section to show ('dashboard' or 'contracts').
-         */
-        function showSection(sectionId) {
-            dashboardSection.classList.add('hidden');
-            contractsSection.classList.add('hidden');
-
-            if (sectionId === 'dashboard') {
-                dashboardSection.classList.remove('hidden');
-                renderDashboard();
-            } else if (sectionId === 'contracts') {
-                contractsSection.classList.remove('hidden');
-                renderContractsList();
             }
         }
 
-        /**
-         * Calculates and updates the displayed actual principal.
-         */
-        function updateActualPrincipalDisplay() {
-            const principal = parseFloat(principalAmountInput.value) || 0;
-            const transferFee = parseFloat(transferFeeInput.value) || 0;
-            const landDeptServiceFee = parseFloat(landDeptServiceFeeInput.value) || 0;
-            const brokerageFee = parseFloat(brokerageFeeInput.value) || 0;
-            const prepaidMonths = parseInt(prepaidInterestMonthsInput.value) || 0;
-            const interestRate = parseFloat(interestRateInput.value) || 0;
-
-            const monthlyInterest = (principal * interestRate) / 100;
-            const prepaidInterestAmount = monthlyInterest * prepaidMonths;
-
-            const actualPrincipal = principal - transferFee - landDeptServiceFee - brokerageFee - prepaidInterestAmount;
-            actualPrincipalDisplay.textContent = formatCurrency(actualPrincipal);
-        }
+        // --- Modal Functions ---
 
         /**
-         * Updates the visibility of the property details section based on contract type and hasProperty selection.
-         */
-        function updatePropertyDetailsVisibility() {
-            const isSellMortgage = contractTypeInput.value === 'ขายฝาก';
-            const hasPropertySelected = hasPropertyYes.checked;
-
-            if (isSellMortgage && hasPropertySelected) {
-                propertyDetailsSection.classList.remove('hidden');
-            } else {
-                propertyDetailsSection.classList.add('hidden');
-                // Clear property details fields if hidden
-                propertyTypeInput.value = '';
-                landDeedNoInput.value = '';
-                propertySizeInput.value = '';
-                propertyLocationInput.value = '';
-                transferFeeInput.value = '0';
-                landDeptServiceFeeInput.value = '0';
-                brokerageFeeInput.value = '0';
-                prepaidInterestMonthsInput.value = '0'; // Clear new field
-            }
-            // Always update actual principal display when visibility changes
-            updateActualPrincipalDisplay();
-        }
-
-        /**
-         * Shows the add/edit contract modal.
+         * Opens the Add/Edit Contract Modal.
          * @param {string|null} contractId - The ID of the contract to edit, or null for a new contract.
          */
-        function showAddEditModal(contractId = null) {
+        function openAddEditContractModal(contractId = null) {
             contractForm.reset(); // Clear form fields
             contractIdInput.value = ''; // Clear hidden ID
-            hasPropertyNo.checked = true; // Default to 'ไม่มีทรัพย์สิน'
-            brokerNameInput.value = ''; // Clear broker name
-            prepaidInterestMonthsInput.value = '0'; // Default new field
-            nextPaymentDueDateManualInput.value = ''; // Clear new manual date field
-            
-            // Set default dates for new contract (today and 1 year from now)
-            const today = new Date();
-            const nextYear = new Date();
-            nextYear.setFullYear(today.getFullYear() + 1);
-            startDateInput.value = today.toISOString().split('T')[0];
-            endDateInput.value = nextYear.toISOString().split('T')[0];
+
+            // Reset property details section visibility and inputs
+            propertyDetailsSection.classList.add('hidden');
+            propertyTypeInput.value = '';
+            landDeedNoInput.value = '';
+            propertySizeInput.value = '';
+            propertyLocationInput.value = '';
+            transferFeeInput.value = '0';
+            landDeptServiceFeeInput.value = '0';
+            brokerageFeeInput.value = '0';
+            prepaidInterestMonthsInput.value = '0';
+            actualPrincipalDisplay.textContent = formatCurrency(0);
+            hasPropertyNo.checked = true; // Default to no property
 
             if (contractId) {
                 modalTitle.textContent = 'แก้ไขสัญญา';
@@ -962,260 +830,216 @@
                     phoneNumberInput.value = contract.phoneNumber;
                     idCardInput.value = contract.idCard;
                     addressInput.value = contract.address;
-                    brokerNameInput.value = contract.brokerName || '';
-                    
-                    if (contract.hasProperty === true) {
-                        hasPropertyYes.checked = true;
-                    } else {
-                        hasPropertyNo.checked = true;
-                    }
-
-                    contractTypeInput.value = contract.type;
+                    brokerNameInput.value = contract.brokerName || ''; // Load broker name
+                    contractTypeInput.value = contract.contractType;
                     principalAmountInput.value = contract.principalAmount;
                     interestRateInput.value = contract.interestRate;
                     startDateInput.value = contract.startDate;
                     endDateInput.value = contract.endDate;
                     paymentFrequencyInput.value = contract.paymentFrequency;
-                    nextPaymentDueDateManualInput.value = contract.nextPaymentDueDateManual || ''; // Populate manual date
+                    nextPaymentDueDateManualInput.value = contract.nextPaymentDueDateManual || ''; // Load manual due date
 
-                    // Update visibility and fill property details if applicable
-                    if (contract.type === 'ขายฝาก' && contract.hasProperty && contract.propertyDetails) {
-                        propertyTypeInput.value = contract.propertyDetails.type || '';
-                        landDeedNoInput.value = contract.propertyDetails.landDeedNo || '';
-                        propertySizeInput.value = contract.propertyDetails.size || '';
-                        propertyLocationInput.value = contract.propertyDetails.location || '';
-                        transferFeeInput.value = contract.propertyDetails.transferFee || '0';
-                        landDeptServiceFeeInput.value = contract.propertyDetails.landDeptServiceFee || '0';
-                        brokerageFeeInput.value = contract.propertyDetails.brokerageFee || '0';
-                        prepaidInterestMonthsInput.value = contract.propertyDetails.prepaidInterestMonths || '0'; // Populate new field
+                    if (contract.hasProperty === true) {
+                        hasPropertyYes.checked = true;
+                        propertyDetailsSection.classList.remove('hidden');
+                        propertyTypeInput.value = contract.propertyType || '';
+                        landDeedNoInput.value = contract.landDeedNo || '';
+                        propertySizeInput.value = contract.propertySize || '';
+                        propertyLocationInput.value = contract.propertyLocation || '';
+                        transferFeeInput.value = contract.transferFee || '0';
+                        landDeptServiceFeeInput.value = contract.landDeptServiceFee || '0';
+                        brokerageFeeInput.value = contract.brokerageFee || '0';
+                        prepaidInterestMonthsInput.value = contract.prepaidInterestMonths || '0';
+                    } else {
+                        hasPropertyNo.checked = true;
+                        propertyDetailsSection.classList.add('hidden');
                     }
+                    updateActualPrincipalDisplay(); // Update display on edit
                 }
             } else {
                 modalTitle.textContent = 'เพิ่มสัญญาใหม่';
+                // Set default dates for new contract
+                const today = new Date();
+                const nextMonth = new Date(today);
+                nextMonth.setMonth(today.getMonth() + 1);
+                startDateInput.value = today.toISOString().split('T')[0];
+                endDateInput.value = nextMonth.toISOString().split('T')[0];
+                nextPaymentDueDateManualInput.value = nextMonth.toISOString().split('T')[0]; // Default manual due date
+                updateActualPrincipalDisplay(); // Update display for new contract
             }
-            updatePropertyDetailsVisibility(); // Call after populating all fields
+
             contractModal.classList.remove('hidden');
         }
 
         /**
-         * Hides the add/edit contract modal.
+         * Closes the Add/Edit Contract Modal.
          */
-        function hideAddEditModal() {
+        function closeContractModal() {
             contractModal.classList.add('hidden');
         }
 
         /**
-         * Shows the payment history modal for a given contract.
-         * @param {string} contractId - The ID of the contract.
+         * Handles the submission of the contract form.
+         * @param {Event} event - The form submission event.
          */
-        function showPaymentHistoryModal(contractId) {
-            currentContractIdForPayment = contractId;
-            const contract = contracts.find(c => c.id === contractId);
-            if (!contract) {
-                showMessageBox('ไม่พบข้อมูลสัญญา', 'error');
+        function handleContractFormSubmit(event) {
+            event.preventDefault();
+
+            const id = contractIdInput.value || generateUUID();
+            const borrowerName = borrowerNameInput.value.trim();
+            const phoneNumber = phoneNumberInput.value.trim();
+            const idCard = idCardInput.value.trim();
+            const address = addressInput.value.trim();
+            const brokerName = brokerNameInput.value.trim();
+            const contractType = contractTypeInput.value;
+            const principalAmount = parseFloat(principalAmountInput.value);
+            const interestRate = parseFloat(interestRateInput.value);
+            const startDate = startDateInput.value;
+            const endDate = endDateInput.value;
+            const paymentFrequency = paymentFrequencyInput.value;
+            const nextPaymentDueDateManual = nextPaymentDueDateManualInput.value;
+            const hasProperty = hasPropertyYes.checked;
+
+            let propertyType = '';
+            let landDeedNo = '';
+            let propertySize = '';
+            let propertyLocation = '';
+            let transferFee = 0;
+            let landDeptServiceFee = 0;
+            let brokerageFee = 0;
+            let prepaidInterestMonths = 0;
+
+            if (hasProperty) {
+                propertyType = propertyTypeInput.value.trim();
+                landDeedNo = landDeedNoInput.value.trim();
+                propertySize = propertySizeInput.value.trim();
+                propertyLocation = propertyLocationInput.value.trim();
+                transferFee = parseFloat(transferFeeInput.value) || 0;
+                landDeptServiceFee = parseFloat(landDeptServiceFeeInput.value) || 0;
+                brokerageFee = parseFloat(brokerageFeeInput.value) || 0;
+                prepaidInterestMonths = parseInt(prepaidInterestMonthsInput.value) || 0;
+            }
+
+            // Basic validation
+            if (!borrowerName || isNaN(principalAmount) || principalAmount <= 0 || isNaN(interestRate) || interestRate < 0 || !startDate || !endDate) {
+                showMessageBox('กรุณากรอกข้อมูลที่จำเป็นให้ครบถ้วนและถูกต้อง (ชื่อ, เงินต้น, ดอกเบี้ย, วันที่)', 'error');
                 return;
             }
 
-            paymentModalContractName.textContent = contract.borrowerName;
-            monthlyInterestAmountDisplay.textContent = formatCurrency(calculateMonthlyInterest(contract));
-            paymentDateInput.value = new Date().toISOString().split('T')[0]; // Set default payment date to today
-            paymentAmountInput.value = calculateMonthlyInterest(contract); // Pre-fill with calculated monthly interest
+            const newContract = {
+                id,
+                borrowerName,
+                phoneNumber,
+                idCard,
+                address,
+                brokerName, // Save broker name
+                hasProperty,
+                contractType,
+                principalAmount,
+                interestRate,
+                startDate,
+                endDate,
+                paymentFrequency,
+                nextPaymentDueDateManual, // Save manual due date
+                propertyType,
+                landDeedNo,
+                propertySize,
+                propertyLocation,
+                transferFee,
+                landDeptServiceFee,
+                brokerageFee,
+                prepaidInterestMonths,
+                payments: [], // Initialize payments array
+                status: 'Active' // Default status
+            };
 
-            renderPaymentHistory(contractId);
-            paymentHistoryModal.classList.remove('hidden');
+            const existingIndex = contracts.findIndex(c => c.id === id);
+            if (existingIndex > -1) {
+                // Update existing contract
+                contracts[existingIndex] = { ...contracts[existingIndex], ...newContract };
+                showMessageBox('อัปเดตสัญญาเรียบร้อยแล้ว!', 'success');
+            } else {
+                // Add new contract
+                contracts.push(newContract);
+                showMessageBox('เพิ่มสัญญาใหม่เรียบร้อยแล้ว!', 'success');
+            }
+
+            saveContracts();
+            renderContractsTable();
+            updateDashboardSummary();
+            closeContractModal();
         }
 
         /**
-         * Hides the payment history modal.
+         * Opens the Payment History Modal for a specific contract.
+         * @param {string} contractId - The ID of the contract.
          */
-        function hidePaymentHistoryModal() {
+        function openPaymentHistoryModal(contractId) {
+            currentContractIdForPayment = contractId;
+            const contract = contracts.find(c => c.id === contractId);
+
+            if (contract) {
+                paymentModalContractName.textContent = contract.borrowerName;
+                const monthlyInterest = (contract.principalAmount * (contract.interestRate / 100)).toFixed(2);
+                monthlyInterestAmountDisplay.textContent = formatCurrency(monthlyInterest);
+                renderPaymentHistory(contract.payments);
+                paymentDateInput.value = new Date().toISOString().split('T')[0]; // Set default payment date to today
+                paymentAmountInput.value = monthlyInterest; // Pre-fill with monthly interest
+
+                paymentHistoryModal.classList.remove('hidden');
+            } else {
+                showMessageBox('ไม่พบสัญญาที่ต้องการดูประวัติการชำระ', 'error');
+            }
+        }
+
+        /**
+         * Closes the Payment History Modal.
+         */
+        function closePaymentHistoryModal() {
             paymentHistoryModal.classList.add('hidden');
             currentContractIdForPayment = null;
         }
 
         /**
-         * Shows the confirmation modal.
-         * @param {string} title - Title for the confirmation modal.
-         * @param {string} message - Message for the confirmation modal.
-         * @param {function} onConfirm - Callback function to execute on confirmation.
+         * Renders the payment history table for a given contract.
+         * @param {Array<object>} payments - Array of payment objects.
          */
-        function showConfirmationModal(title, message, onConfirm) {
-            confirmModalTitle.textContent = title;
-            confirmModalMessage.textContent = message;
-            confirmActionBtn.onclick = () => {
-                onConfirm();
-                hideConfirmationModal();
-            };
-            confirmationModal.classList.remove('hidden');
+        function renderPaymentHistory(payments) {
+            paymentHistoryTableBody.innerHTML = '';
+            if (payments.length === 0) {
+                paymentHistoryTableBody.innerHTML = `
+                    <tr>
+                        <td colspan="3" class="text-center py-4 text-gray-500">ยังไม่มีประวัติการชำระ</td>
+                    </tr>
+                `;
+                return;
+            }
+
+            payments.forEach((payment, index) => {
+                const row = paymentHistoryTableBody.insertRow();
+                row.classList.add('border-b', 'border-gray-200', 'hover:bg-gray-50');
+                row.innerHTML = `
+                    <td class="py-3 px-4 text-sm text-gray-800">${formatDate(payment.date)}</td>
+                    <td class="py-3 px-4 text-sm text-gray-600">${formatCurrency(payment.amount)}</td>
+                    <td class="py-3 px-4 text-sm">
+                        <button class="text-red-600 hover:text-red-800 delete-payment-btn" data-index="${index}" title="ลบรายการชำระ">
+                            <i class="fas fa-trash-alt"></i>
+                        </button>
+                    </td>
+                `;
+            });
+
+            document.querySelectorAll('.delete-payment-btn').forEach(button => {
+                button.onclick = (event) => confirmDeletePayment(event.currentTarget.dataset.index);
+            });
         }
 
         /**
-         * Hides the confirmation modal.
+         * Adds a new payment to the current contract's payment history.
          */
-        function hideConfirmationModal() {
-            confirmationModal.classList.add('hidden');
-        }
-
-        // --- Event Handlers ---
-
-        /**
-         * Handles form submission for adding or updating a contract.
-         * @param {Event} e - The form submit event.
-         */
-        function handleContractFormSubmit(e) {
-            e.preventDefault();
-
-            const isEditing = !!contractIdInput.value;
-            const contractId = isEditing ? contractIdInput.value : generateUUID();
-
-            const principal = parseFloat(principalAmountInput.value);
-            const interest = parseFloat(interestRateInput.value);
-            const hasProperty = hasPropertyYes.checked;
-
-            // Input validation for phone number and ID card
-            const phoneNumber = phoneNumberInput.value.trim();
-            const idCard = idCardInput.value.trim();
-
-            if (phoneNumber.length > 0 && (phoneNumber.length !== 10 || !/^[0-9]{10}$/.test(phoneNumber))) {
-                showMessageBox('กรุณากรอกเบอร์โทรศัพท์ให้ถูกต้อง (10 หลักตัวเลข)', 'error');
-                return;
-            }
-            if (idCard.length > 0 && (idCard.length !== 13 || !/^[0-9]{13}$/.test(idCard))) {
-                showMessageBox('กรุณากรอกเลขบัตรประชาชนให้ถูกต้อง (13 หลักตัวเลข)', 'error');
-                return;
-            }
-
-            if (isNaN(principal) || principal <= 0) {
-                showMessageBox('กรุณากรอกเงินต้นให้ถูกต้อง', 'error');
-                return;
-            }
-            if (isNaN(interest) || interest < 0) {
-                showMessageBox('กรุณากรอกอัตราดอกเบี้ยให้ถูกต้อง', 'error');
-                return;
-            }
-            if (new Date(startDateInput.value) > new Date(endDateInput.value)) {
-                showMessageBox('วันที่ครบกำหนดต้องไม่ก่อนวันที่ทำสัญญา', 'error');
-                return;
-            }
-            if (nextPaymentDueDateManualInput.value && new Date(nextPaymentDueDateManualInput.value) < new Date(startDateInput.value)) {
-                showMessageBox('กำหนดชำระถัดไปต้องไม่ก่อนวันที่ทำสัญญา', 'error');
-                return;
-            }
-
-
-            const newContract = {
-                id: contractId,
-                borrowerName: borrowerNameInput.value.trim(),
-                phoneNumber: phoneNumber, // Use validated phone number
-                idCard: idCard,         // Use validated ID card
-                address: addressInput.value.trim(),
-                brokerName: brokerNameInput.value.trim(),
-                hasProperty: hasProperty,
-                type: contractTypeInput.value,
-                principalAmount: principal,
-                interestRate: interest,
-                startDate: startDateInput.value,
-                endDate: endDateInput.value,
-                paymentFrequency: paymentFrequencyInput.value,
-                nextPaymentDueDateManual: nextPaymentDueDateManualInput.value, // Store manual date
-                status: 'Active', // Default status, will be updated by updateContractStatuses
-                propertyDetails: null,
-                payments: []
-            };
-
-            if (newContract.type === 'ขายฝาก' && newContract.hasProperty) {
-                const transferFee = parseFloat(transferFeeInput.value) || 0;
-                const landDeptServiceFee = parseFloat(landDeptServiceFeeInput.value) || 0;
-                const brokerageFee = parseFloat(brokerageFeeInput.value) || 0;
-                const prepaidMonths = parseInt(prepaidInterestMonthsInput.value) || 0;
-                const monthlyInterest = (principal * interest) / 100;
-                const prepaidInterestAmount = monthlyInterest * prepaidMonths;
-                const actualPrincipal = principal - transferFee - landDeptServiceFee - brokerageFee - prepaidInterestAmount;
-
-                newContract.propertyDetails = {
-                    type: propertyTypeInput.value.trim(),
-                    landDeedNo: landDeedNoInput.value.trim(),
-                    size: propertySizeInput.value.trim(),
-                    location: propertyLocationInput.value.trim(),
-                    transferFee: transferFee,
-                    landDeptServiceFee: landDeptServiceFee,
-                    brokerageFee: brokerageFee,
-                    prepaidInterestMonths: prepaidMonths,
-                    prepaidInterestAmount: prepaidInterestAmount,
-                    actualPrincipal: actualPrincipal
-                };
-            }
-
-            if (isEditing) {
-                const index = contracts.findIndex(c => c.id === contractId);
-                if (index !== -1) {
-                    newContract.payments = contracts[index].payments || [];
-                    contracts[index] = newContract;
-                    showMessageBox('แก้ไขสัญญาสำเร็จ!', 'success');
-                }
-            } else {
-                contracts.push(newContract);
-                showMessageBox('เพิ่มสัญญาใหม่สำเร็จ!', 'success');
-            }
-
-            saveContracts();
-            hideAddEditModal();
-            renderContractsList(); // This will call updateContractStatuses
-            renderDashboard();    // This will call updateContractStatuses
-        }
-
-        /**
-         * Confirms and deletes a contract.
-         * @param {string} id - The ID of the contract to delete.
-         */
-        function confirmDeleteContract(id) {
-            const contract = contracts.find(c => c.id === id);
-            if (!contract) return;
-            showConfirmationModal(
-                'ยืนยันการลบสัญญา',
-                `คุณแน่ใจหรือไม่ที่ต้องการลบสัญญาของ ${contract.borrowerName} (เงินต้น ${formatCurrency(contract.principalAmount)})? การดำเนินการนี้ไม่สามารถย้อนกลับได้`,
-                () => {
-                    contracts = contracts.filter(c => c.id !== id);
-                    saveContracts();
-                    renderContractsList();
-                    renderDashboard();
-                    showMessageBox('ลบสัญญาสำเร็จ!', 'success');
-                }
-            );
-        }
-
-        /**
-         * Confirms and marks a contract as redeemed.
-         * @param {string} id - The ID of the contract to redeem.
-         */
-        function confirmRedeemContract(id) {
-            const contract = contracts.find(c => c.id === id);
-            if (!contract) return;
-            showConfirmationModal(
-                'ยืนยันการไถ่ถอน/ชำระคืน',
-                `คุณแน่ใจหรือไม่ที่ต้องการเปลี่ยนสถานะสัญญาของ ${contract.borrowerName} เป็น "ไถ่ถอนแล้ว/ชำระคืนแล้ว"?`,
-                () => {
-                    const index = contracts.findIndex(c => c.id === id);
-                    if (index !== -1) {
-                        contracts[index].status = 'Redeemed';
-                        saveContracts();
-                        renderContractsList();
-                        renderDashboard();
-                        showMessageBox('เปลี่ยนสถานะสัญญาเป็น "ไถ่ถอนแล้ว" สำเร็จ!', 'success');
-                    }
-                }
-            );
-        }
-
-        /**
-         * Handles adding a new payment to the current contract.
-         */
-        function handleAddPayment() {
-            if (!currentContractIdForPayment) return;
-
-            const contract = contracts.find(c => c.id === currentContractIdForPayment);
-            if (!contract) {
-                showMessageBox('ไม่พบข้อมูลสัญญา', 'error');
+        function addPayment() {
+            if (!currentContractIdForPayment) {
+                showMessageBox('เกิดข้อผิดพลาด: ไม่พบสัญญาที่เลือก', 'error');
                 return;
             }
 
@@ -1227,79 +1051,156 @@
                 return;
             }
 
-            if (!contract.payments) {
-                contract.payments = [];
+            const contractIndex = contracts.findIndex(c => c.id === currentContractIdForPayment);
+            if (contractIndex > -1) {
+                contracts[contractIndex].payments.push({
+                    date: paymentDate,
+                    amount: paymentAmount
+                });
+                saveContracts();
+                renderPaymentHistory(contracts[contractIndex].payments);
+                showMessageBox('บันทึกการชำระเรียบร้อยแล้ว!', 'success');
+            } else {
+                showMessageBox('ไม่พบสัญญาที่ต้องการบันทึกการชำระ', 'error');
             }
-            contract.payments.push({
-                date: paymentDate,
-                amount: paymentAmount
-            });
-
-            saveContracts();
-            renderPaymentHistory(currentContractIdForPayment);
-            renderContractsList();
-            renderDashboard();
-            showMessageBox('บันทึกการชำระสำเร็จ!', 'success');
         }
 
         /**
-         * Confirms and deletes a specific payment from a contract.
-         * @param {string} contractId - The ID of the contract.
-         * @param {string} paymentDate - The date of the payment to delete.
+         * Shows the confirmation modal for deleting a contract.
+         * @param {string} contractId - The ID of the contract to delete.
          */
-        function confirmDeletePayment(contractId, paymentDate) {
-            const contract = contracts.find(c => c.id === contractId);
-            if (!contract) return;
-
-            showConfirmationModal(
-                'ยืนยันการลบการชำระ',
-                `คุณแน่ใจหรือไม่ที่ต้องการลบการชำระดอกเบี้ยในวันที่ ${formatDate(paymentDate)} ของ ${contract.borrowerName}?`,
-                () => {
-                    contract.payments = contract.payments.filter(p => p.date !== paymentDate);
-                    saveContracts();
-                    renderPaymentHistory(contractId);
-                    renderContractsList();
-                    renderDashboard();
-                    showMessageBox('ลบการชำระสำเร็จ!', 'success');
-                }
-            );
+        function confirmDeleteContract(contractId) {
+            confirmModalTitle.textContent = 'ยืนยันการลบสัญญา';
+            confirmModalMessage.textContent = 'คุณแน่ใจหรือไม่ที่ต้องการลบสัญญานี้? การดำเนินการนี้ไม่สามารถย้อนกลับได้';
+            confirmActionBtn.onclick = () => deleteContract(contractId);
+            confirmationModal.classList.remove('hidden');
         }
 
+        /**
+         * Shows the confirmation modal for deleting a payment.
+         * @param {number} paymentIndex - The index of the payment to delete in the current contract's payments array.
+         */
+        function confirmDeletePayment(paymentIndex) {
+            confirmModalTitle.textContent = 'ยืนยันการลบรายการชำระ';
+            confirmModalMessage.textContent = 'คุณแน่ใจหรือไม่ที่ต้องการลบรายการชำระนี้?';
+            confirmActionBtn.onclick = () => deletePayment(paymentIndex);
+            confirmationModal.classList.remove('hidden');
+        }
+
+        /**
+         * Deletes a contract by its ID.
+         * @param {string} contractId - The ID of the contract to delete.
+         */
+        function deleteContract(contractId) {
+            contracts = contracts.filter(c => c.id !== contractId);
+            saveContracts();
+            renderContractsTable();
+            updateDashboardSummary();
+            closeConfirmationModal();
+            showMessageBox('ลบสัญญาเรียบร้อยแล้ว!', 'success');
+        }
+
+        /**
+         * Deletes a payment from the current contract's payment history.
+         * @param {number} paymentIndex - The index of the payment to delete.
+         */
+        function deletePayment(paymentIndex) {
+            if (!currentContractIdForPayment) {
+                showMessageBox('เกิดข้อผิดพลาด: ไม่พบสัญญาที่เลือก', 'error');
+                closeConfirmationModal();
+                return;
+            }
+
+            const contractIndex = contracts.findIndex(c => c.id === currentContractIdForPayment);
+            if (contractIndex > -1) {
+                contracts[contractIndex].payments.splice(paymentIndex, 1);
+                saveContracts();
+                renderPaymentHistory(contracts[contractIndex].payments);
+                showMessageBox('ลบรายการชำระเรียบร้อยแล้ว!', 'success');
+            } else {
+                showMessageBox('ไม่พบสัญญาที่ต้องการลบรายการชำระ', 'error');
+            }
+            closeConfirmationModal();
+        }
+
+        /**
+         * Closes the confirmation modal.
+         */
+        function closeConfirmationModal() {
+            confirmationModal.classList.add('hidden');
+        }
+
+        /**
+         * Updates the "Actual Principal" display in the contract modal.
+         */
+        function updateActualPrincipalDisplay() {
+            const principal = parseFloat(principalAmountInput.value) || 0;
+            const transferFee = parseFloat(transferFeeInput.value) || 0;
+            const landDeptServiceFee = parseFloat(landDeptServiceFeeInput.value) || 0;
+            const brokerageFee = parseFloat(brokerageFeeInput.value) || 0;
+            const prepaidInterestMonths = parseInt(prepaidInterestMonthsInput.value) || 0;
+            const interestRate = parseFloat(interestRateInput.value) || 0;
+
+            const actualPrincipal = calculateActualPrincipal(principal, transferFee, landDeptServiceFee, brokerageFee, prepaidInterestMonths, interestRate);
+            actualPrincipalDisplay.textContent = formatCurrency(actualPrincipal);
+        }
 
         // --- Event Listeners ---
 
-        navDashboard.addEventListener('click', () => showSection('dashboard'));
-        navContracts.addEventListener('click', () => showSection('contracts'));
-        addContractBtn.addEventListener('click', () => showAddEditModal());
-        cancelContractModalBtn.addEventListener('click', hideAddEditModal);
+        // Navigation
+        navDashboard.addEventListener('click', () => {
+            dashboardSection.classList.remove('hidden');
+            contractsSection.classList.add('hidden');
+            updateDashboardSummary(); // Ensure dashboard is updated when navigating to it
+        });
+
+        navContracts.addEventListener('click', () => {
+            contractsSection.classList.remove('hidden');
+            dashboardSection.classList.add('hidden');
+            renderContractsTable(); // Ensure contracts table is rendered when navigating to it
+        });
+
+        // Contract Modal
+        addContractBtn.addEventListener('click', () => openAddEditContractModal());
+        cancelContractModalBtn.addEventListener('click', closeContractModal);
         contractForm.addEventListener('submit', handleContractFormSubmit);
-        closePaymentHistoryModalBtn.addEventListener('click', hidePaymentHistoryModal);
-        addPaymentBtn.addEventListener('click', handleAddPayment);
-        cancelConfirmBtn.addEventListener('click', hideConfirmationModal);
 
-        // Event listeners for property details visibility and actual principal calculation
-        hasPropertyYes.addEventListener('change', updatePropertyDetailsVisibility);
-        hasPropertyNo.addEventListener('change', updatePropertyDetailsVisibility);
-        contractTypeInput.addEventListener('change', updatePropertyDetailsVisibility);
+        // Property Details Visibility
+        hasPropertyYes.addEventListener('change', () => {
+            propertyDetailsSection.classList.remove('hidden');
+            updateActualPrincipalDisplay();
+        });
+        hasPropertyNo.addEventListener('change', () => {
+            propertyDetailsSection.classList.add('hidden');
+            updateActualPrincipalDisplay(); // Update even if hidden, to reset calculation
+        });
 
-        // Event listeners for real-time actual principal calculation
+        // Recalculate Actual Principal on input change
         principalAmountInput.addEventListener('input', updateActualPrincipalDisplay);
-        interestRateInput.addEventListener('input', updateActualPrincipalDisplay);
         transferFeeInput.addEventListener('input', updateActualPrincipalDisplay);
         landDeptServiceFeeInput.addEventListener('input', updateActualPrincipalDisplay);
         brokerageFeeInput.addEventListener('input', updateActualPrincipalDisplay);
         prepaidInterestMonthsInput.addEventListener('change', updateActualPrincipalDisplay);
+        interestRateInput.addEventListener('input', updateActualPrincipalDisplay); // Interest rate also affects actual principal due to prepaid interest
 
+        // Payment History Modal
+        addPaymentBtn.addEventListener('click', addPayment);
+        closePaymentHistoryModalBtn.addEventListener('click', closePaymentHistoryModal);
 
-        // Search and Filter Event Listeners
-        searchContract.addEventListener('input', renderContractsList);
-        filterStatus.addEventListener('change', renderContractsList);
-        filterType.addEventListener('change', renderContractsList);
+        // Confirmation Modal
+        cancelConfirmBtn.addEventListener('click', closeConfirmationModal);
 
-        // Initial App Load
+        // Filters and Search
+        searchContract.addEventListener('input', renderContractsTable);
+        filterStatus.addEventListener('change', renderContractsTable);
+        filterType.addEventListener('change', renderContractsTable);
+
+        // --- Initial Load ---
         document.addEventListener('DOMContentLoaded', () => {
             loadContracts();
-            showSection('dashboard'); // Start on the dashboard
+            updateDashboardSummary();
+            renderContractsTable(); // Render contracts table initially (it will be hidden by default)
+            navDashboard.click(); // Show dashboard by default
         });
     </script>
 </body>
